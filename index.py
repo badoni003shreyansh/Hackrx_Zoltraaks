@@ -268,7 +268,7 @@ def process_questions(text: str, questions: List[str]) -> List[str]:
             detail=f"Question processing failed: {str(e)}"
         )
 # Optimized API Endpoint
-@app.post("/query", response_model=QueryResponse, dependencies=[Depends(verify_token)])
+@app.post("/api/v1/hackrx/run", response_model=QueryResponse, dependencies=[Depends(verify_token)])
 async def handle_query(request: QueryRequest):
     try:
         # Process document
