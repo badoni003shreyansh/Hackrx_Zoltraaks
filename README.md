@@ -17,7 +17,7 @@ A FastAPI-based application that processes PDF documents and answers questions u
 - **Embeddings**: Google Generative AI
 - **Language Model**: Groq (Llama 3.3 70B)
 - **PDF Processing**: PyPDF2
-- **Deployment**: Render, Docker
+- **Deployment**: Render
 
 ## Prerequisites
 
@@ -75,7 +75,7 @@ Once running, visit `http://localhost:8000/docs` for interactive API documentati
 
 ### Endpoints
 
-#### POST `/query`
+#### POST `/api/v1/hackrx/run`
 Process a PDF document and answer questions.
 
 **Headers:**
@@ -126,22 +126,7 @@ Authorization: Bearer <your_api_bearer_token>
    - Navigate to "Environment" tab
    - Add all required environment variables
 
-### Option 2: Docker
 
-1. **Build the image**
-   ```bash
-   docker build -t document-qa-system .
-   ```
-
-2. **Run the container**
-   ```bash
-   docker run -p 8000:8000 \
-     -e API_BEARER_TOKEN=your_token \
-     -e ASTRA_DB_APPLICATION_TOKEN=your_token \
-     -e ASTRA_DB_ID=your_id \
-     -e GROQ_API_KEY=your_key \
-     document-qa-system
-   ```
 
 ## Performance Optimizations
 
@@ -182,7 +167,6 @@ Authorization: Bearer <your_api_bearer_token>
 Check application logs for detailed error information:
 - Local: Console output
 - Render: Service logs in dashboard
-- Docker: `docker logs <container_id>`
 
 ## Contributing
 
