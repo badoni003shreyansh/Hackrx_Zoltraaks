@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: document-qa-system
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python index.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: API_BEARER_TOKEN
+        sync: false
+      - key: ASTRA_DB_APPLICATION_TOKEN
+        sync: false
+      - key: ASTRA_DB_ID
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+    healthCheckPath: /docs
+    autoDeploy: true

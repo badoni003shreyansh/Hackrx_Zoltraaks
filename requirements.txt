@@ -1,0 +1,14 @@
+cassio
+datasets
+langchain
+openai
+tiktoken
+langchain-community
+langchain-google-genai
+requests
+python-dotenv
+fastapi
+uvicorn
+PyPDF2
+langchain-groq
+
