@@ -60,24 +60,55 @@ class QueryResponse(BaseModel):
 
 # Authentication
 def clean_llm_json(llm_output: str):
-    # First try to parse directly in case it's pure JSON
-    try:
-        json.loads(llm_output.strip())
-        return llm_output.strip()
-    except json.JSONDecodeError:
-        pass
+    """
+    Clean LLM output to extract valid JSON.
+    Handles various formatting issues and extra characters.
+    """
+    if not llm_output:
+        return "{}"
     
     # Remove markdown code fences (```json ... ```)
     cleaned = re.sub(r"^```[a-zA-Z]*\n?", "", llm_output.strip(), flags=re.MULTILINE)
     cleaned = re.sub(r"\n?```$", "", cleaned)
     
-    # Remove any text before the first { and after the last }
+    # Find the first { and last } to extract just the JSON part
     start = cleaned.find('{')
     end = cleaned.rfind('}') + 1
-    if start != -1 and end != 0 and start < end:
-        cleaned = cleaned[start:end]
     
-    return cleaned.strip()
+    if start == -1 or end == 0 or start >= end:
+        # No valid JSON structure found
+        return "{}"
+    
+    # Extract the JSON portion
+    json_part = cleaned[start:end]
+    
+    # Try to parse the extracted JSON
+    try:
+        # Test if it's valid JSON
+        json.loads(json_part)
+        return json_part
+    except json.JSONDecodeError:
+        # If still invalid, try to clean further
+        # Remove any non-printable characters that might cause issues
+        json_part = re.sub(r'[^\x20-\x7E\n\r\t]', '', json_part)
+        
+        # Try parsing again
+        try:
+            json.loads(json_part)
+            return json_part
+        except json.JSONDecodeError:
+            # Try to fix common JSON issues
+            try:
+                # Fix common quote issues
+                json_part = re.sub(r'([^\\])"([^"]*)"([^\\])', r'\1"\2"\3', json_part)
+                # Remove any trailing commas before closing brackets/braces
+                json_part = re.sub(r',(\s*[}\]])', r'\1', json_part)
+                
+                json.loads(json_part)
+                return json_part
+            except json.JSONDecodeError:
+                # Last resort: return empty JSON
+                return "{}"
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Security(auth_scheme)):
     if credentials.scheme != "Bearer" or credentials.credentials != API_BEARER_TOKEN:
@@ -140,10 +171,19 @@ def create_prompt_for_questions(text: str, questions: List[str]) -> str:
         astra_vector_store.add_texts(text_chunks)
         print(f"Inserted {len(text_chunks)} text chunks into the vector store.")
 
-        # Optimized system message - shorter and more direct
-        system_message = """Return ONLY valid JSON with answers array.
-        Each answer: 600-800 characters, precise, based on context.
-        Format: {"answers": ["answer1", "answer2", ...]}"""
+        # Optimized system message - more explicit about JSON formatting
+        system_message = """You must return ONLY valid JSON with no additional text, formatting, or explanations.
+        
+        Format your response exactly like this:
+        {"answers": ["answer1", "answer2", "answer3", ...]}
+        
+        Rules:
+        - Each answer should be 600-800 characters
+        - Be precise and based on the provided context
+        - Do not include any text before or after the JSON
+        - Do not use markdown formatting
+        - Ensure all quotes are properly escaped
+        - Return exactly the number of answers as there are questions"""
 
         # OPTIMIZED: Single combined similarity search
         # Combine all questions into one search query for better efficiency
@@ -212,6 +252,10 @@ def send_prompt_to_groq(prompt: str) -> str:
 
         # Extract the response content
         reply = completion.choices[0].message.content
+        
+        # Log the raw response for debugging
+        print(f"Raw Groq response: {reply[:200]}...")  # First 200 chars
+        
         return reply
         
     except Exception as e:
@@ -243,11 +287,14 @@ def process_questions(text: str, questions: List[str]) -> List[str]:
         # Clean & parse JSON
         try:
             cleaned_output = clean_llm_json(reply)
+            print(f"Cleaned output: {cleaned_output}")
+            
             data = json.loads(cleaned_output)
             answers = data.get("answers", [])
             
             # Ensure we have the right number of answers
             if len(answers) != len(questions):
+                print(f"Answer count mismatch: expected {len(questions)}, got {len(answers)}")
                 # Fallback: create placeholder answers if mismatch
                 while len(answers) < len(questions):
                     answers.append("Unable to find sufficient information in the document.")
@@ -258,8 +305,21 @@ def process_questions(text: str, questions: List[str]) -> List[str]:
         except json.JSONDecodeError as e:
             print(f"Error parsing LLM JSON: {e}")
             print(f"Raw LLM output: {reply}")
-            # Fallback response
-            return ["Unable to process question due to parsing error."] * len(questions)
+            print(f"Cleaned output: {cleaned_output}")
+            
+            # Try to extract answers using regex as a fallback
+            try:
+                # Look for patterns like "answer1", "answer2" etc.
+                answer_pattern = r'"([^"]{50,800})"'  # Answers between 50-800 chars
+                extracted_answers = re.findall(answer_pattern, reply)
+                
+                if extracted_answers and len(extracted_answers) >= len(questions):
+                    return extracted_answers[:len(questions)]
+                else:
+                    # Final fallback
+                    return ["Unable to process question due to parsing error."] * len(questions)
+            except Exception:
+                return ["Unable to process question due to parsing error."] * len(questions)
 
     except Exception as e:
         print(f"Question processing error: {str(e)}")

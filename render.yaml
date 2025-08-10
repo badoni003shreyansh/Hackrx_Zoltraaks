@@ -16,5 +16,5 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false
-    healthCheckPath: /docs
+    healthCheckPath: /health
     autoDeploy: true
