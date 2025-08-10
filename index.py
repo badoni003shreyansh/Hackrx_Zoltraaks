@@ -235,7 +235,7 @@ def send_prompt_to_groq(prompt: str) -> str:
         # Single LLM call using native Groq client (non-streaming)
         groq_client = Groq(api_key=GROQ_API_KEY)
         completion = groq_client.chat.completions.create(
-            model="openai/gpt-oss-20b",  # You can change this to your preferred model
+            model="llama-3.3-70b-versatile",  # You can change this to your preferred model
             messages=[
                 {
                     "role": "user",
