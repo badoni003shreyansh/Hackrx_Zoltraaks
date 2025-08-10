@@ -60,55 +60,49 @@ class QueryResponse(BaseModel):
 
 # Authentication
 def clean_llm_json(llm_output: str):
-    """
-    Clean LLM output to extract valid JSON.
-    Handles various formatting issues and extra characters.
-    """
-    if not llm_output:
-        return "{}"
+    # First try to parse directly in case it's pure JSON
+    try:
+        json.loads(llm_output.strip())
+        return llm_output.strip()
+    except json.JSONDecodeError:
+        pass
     
     # Remove markdown code fences (```json ... ```)
     cleaned = re.sub(r"^```[a-zA-Z]*\n?", "", llm_output.strip(), flags=re.MULTILINE)
     cleaned = re.sub(r"\n?```$", "", cleaned)
     
-    # Find the first { and last } to extract just the JSON part
+    # Remove common LLM prefixes/suffixes
+    cleaned = re.sub(r"^(Here's|Here is|The answer is|Response:|JSON:)\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*(That's all|End of response|\.)$", "", cleaned, flags=re.IGNORECASE)
+    
+    # Find JSON object boundaries more precisely
     start = cleaned.find('{')
-    end = cleaned.rfind('}') + 1
+    end = cleaned.rfind('}')
     
-    if start == -1 or end == 0 or start >= end:
-        # No valid JSON structure found
-        return "{}"
-    
-    # Extract the JSON portion
-    json_part = cleaned[start:end]
-    
-    # Try to parse the extracted JSON
-    try:
-        # Test if it's valid JSON
-        json.loads(json_part)
-        return json_part
-    except json.JSONDecodeError:
-        # If still invalid, try to clean further
-        # Remove any non-printable characters that might cause issues
-        json_part = re.sub(r'[^\x20-\x7E\n\r\t]', '', json_part)
+    if start != -1 and end != -1 and start < end:
+        # Extract the JSON portion
+        json_portion = cleaned[start:end + 1]
         
-        # Try parsing again
+        # Try to fix common JSON issues before returning
         try:
-            json.loads(json_part)
-            return json_part
+            # Fix trailing commas
+            json_portion = re.sub(r',(\s*[}\]])', r'\1', json_portion)
+            
+            # Fix missing quotes around keys
+            json_portion = re.sub(r'(\s*)(\w+)(\s*):', r'\1"\2"\3:', json_portion)
+            
+            # Fix single quotes to double quotes
+            json_portion = re.sub(r"'([^']*)'", r'"\1"', json_portion)
+            
+            # Try to validate the fixed JSON
+            json.loads(json_portion)
+            return json_portion
         except json.JSONDecodeError:
-            # Try to fix common JSON issues
-            try:
-                # Fix common quote issues
-                json_part = re.sub(r'([^\\])"([^"]*)"([^\\])', r'\1"\2"\3', json_part)
-                # Remove any trailing commas before closing brackets/braces
-                json_part = re.sub(r',(\s*[}\]])', r'\1', json_part)
-                
-                json.loads(json_part)
-                return json_part
-            except json.JSONDecodeError:
-                # Last resort: return empty JSON
-                return "{}"
+            # If still invalid, return the original cleaned portion
+            return json_portion
+    
+    # If no JSON structure found, return empty object
+    return "{}"
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Security(auth_scheme)):
     if credentials.scheme != "Bearer" or credentials.credentials != API_BEARER_TOKEN:
@@ -161,8 +155,9 @@ def create_prompt_for_questions(text: str, questions: List[str]) -> str:
     try:
         # Optimized text chunking - smaller chunks for faster search
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=700,      # Reduced from 800
-            chunk_overlap=200,
+            chunk_size=600,      # Reduced from 800
+            chunk_overlap=100,   # Reduced from 200
+            separators=["\n\n", "\n", ". ", ".", " ", ""]  # More granular splitting
         )
         text_chunks = text_splitter.split_text(text)
         
@@ -170,19 +165,10 @@ def create_prompt_for_questions(text: str, questions: List[str]) -> str:
         astra_vector_store.add_texts(text_chunks)
         print(f"Inserted {len(text_chunks)} text chunks into the vector store.")
 
-        # Optimized system message - more explicit about JSON formatting
-        system_message = """You must return ONLY valid JSON with no additional text, formatting, or explanations.
-        
-        Format your response exactly like this:
-        {"answers": ["answer1", "answer2", "answer3", ...]}
-        
-        Rules:
-        - Each answer should be 600-800 characters
-        - Be precise and based on the provided context
-        - Do not include any text before or after the JSON
-        - Do not use markdown formatting
-        - Ensure all quotes are properly escaped
-        - Return exactly the number of answers as there are questions"""
+        # Optimized system message - shorter and more direct
+        system_message = """Return ONLY valid JSON with answers array.
+        Each answer: 600-800 characters, precise, based on context.
+        Format: {"answers": ["answer1", "answer2", ...]}"""
 
         # OPTIMIZED: Single combined similarity search
         # Combine all questions into one search query for better efficiency
@@ -251,10 +237,6 @@ def send_prompt_to_groq(prompt: str) -> str:
 
         # Extract the response content
         reply = completion.choices[0].message.content
-        
-        # Log the raw response for debugging
-        print(f"Raw Groq response: {reply[:200]}...")  # First 200 chars
-        
         return reply
         
     except Exception as e:
@@ -286,14 +268,11 @@ def process_questions(text: str, questions: List[str]) -> List[str]:
         # Clean & parse JSON
         try:
             cleaned_output = clean_llm_json(reply)
-            print(f"Cleaned output: {cleaned_output}")
-            
             data = json.loads(cleaned_output)
             answers = data.get("answers", [])
             
             # Ensure we have the right number of answers
             if len(answers) != len(questions):
-                print(f"Answer count mismatch: expected {len(questions)}, got {len(answers)}")
                 # Fallback: create placeholder answers if mismatch
                 while len(answers) < len(questions):
                     answers.append("Unable to find sufficient information in the document.")
@@ -304,21 +283,8 @@ def process_questions(text: str, questions: List[str]) -> List[str]:
         except json.JSONDecodeError as e:
             print(f"Error parsing LLM JSON: {e}")
             print(f"Raw LLM output: {reply}")
-            print(f"Cleaned output: {cleaned_output}")
-            
-            # Try to extract answers using regex as a fallback
-            try:
-                # Look for patterns like "answer1", "answer2" etc.
-                answer_pattern = r'"([^"]{50,800})"'  # Answers between 50-800 chars
-                extracted_answers = re.findall(answer_pattern, reply)
-                
-                if extracted_answers and len(extracted_answers) >= len(questions):
-                    return extracted_answers[:len(questions)]
-                else:
-                    # Final fallback
-                    return ["Unable to process question due to parsing error."] * len(questions)
-            except Exception:
-                return ["Unable to process question due to parsing error."] * len(questions)
+            # Fallback response
+            return ["Unable to process question due to parsing error."] * len(questions)
 
     except Exception as e:
         print(f"Question processing error: {str(e)}")
@@ -327,7 +293,7 @@ def process_questions(text: str, questions: List[str]) -> List[str]:
             detail=f"Question processing failed: {str(e)}"
         )
 # Optimized API Endpoint
-@app.post("/api/v1/hackrx/run", response_model=QueryResponse, dependencies=[Depends(verify_token)])
+@app.post("/query", response_model=QueryResponse, dependencies=[Depends(verify_token)])
 async def handle_query(request: QueryRequest):
     try:
         # Process document
@@ -367,8 +333,6 @@ def cleanup():
 if __name__ == "__main__":
     import uvicorn
     try:
-        # Get port from environment variable for Render deployment
-        port = int(os.getenv("PORT", 8000))
-        uvicorn.run(app, host="0.0.0.0", port=port)
+        uvicorn.run(app, host="0.0.0.0", port=8000)
     finally:
         cleanup()
