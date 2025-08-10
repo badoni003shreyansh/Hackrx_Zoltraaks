@@ -13,7 +13,7 @@ from PyPDF2 import PdfReader
 from langchain_community.vectorstores.cassandra import Cassandra
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from groq import Groq  # Changed import
+from openai import OpenAI
 import cassio
 
 
@@ -23,7 +23,6 @@ load_dotenv()
 API_BEARER_TOKEN = os.getenv("API_BEARER_TOKEN")
 ASTRA_TOKEN = os.getenv("ASTRA_DB_APPLICATION_TOKEN")
 ASTRA_DB_ID = os.getenv("ASTRA_DB_ID")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 if not all([API_BEARER_TOKEN, ASTRA_TOKEN, ASTRA_DB_ID]):
     raise ValueError("Missing required environment variables")
@@ -166,8 +165,25 @@ def create_prompt_for_questions(text: str, questions: List[str]) -> str:
         print(f"Inserted {len(text_chunks)} text chunks into the vector store.")
 
         # Optimized system message - shorter and more direct
-        system_message = """Return ONLY valid JSON with answers array.
-        Each answer: 600-800 characters, precise, based on context.
+        system_message = """##System
+You are a helpful assistant who answers queries. Return ONLY valid JSON.
+
+##Instructions
+Return only JSON with keys:
+- answer : (string)
+
+##Context
+You have been provided with the following extracted context for each question.
+
+##Input
+A list of questions regarding the provided context.
+
+##Output
+Each answer must be precise (600-800 characters).
+Return the answers as a JSON array of strings in the same order as the questions.
+For each answer GIVE A ONE SENTENCE SUMMARY of the context related to the question.
+
+##Example Output
         Format: {"answers": ["answer1", "answer2", ...]}"""
 
         # OPTIMIZED: Single combined similarity search
@@ -219,24 +235,26 @@ def send_prompt_to_groq(prompt: str) -> str:
     """
     try:
         # Single LLM call using native Groq client (non-streaming)
-        groq_client = Groq(api_key=GROQ_API_KEY)
-        completion = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",  # You can change this to your preferred model
+        client = OpenAI(
+            base_url="https://models.github.ai/inference",
+            api_key=os.environ["GITHUB_TOKEN"],
+        )
+ 
+        response = client.chat.completions.create(
             messages=[
                 {
-                    "role": "user",
-                    "content": prompt
-                }
+                    "role": "system",
+                    "content": prompt,
+                },
             ],
+            model="openai/gpt-4.1-mini",
             temperature=0.1,
-            max_completion_tokens=800,
-            top_p=0.8,
-            stream=False,  # Set to False for non-streaming response
-            stop=None
+            max_tokens=800,
+            top_p=0.8
         )
 
-        # Extract the response content
-        reply = completion.choices[0].message.content
+                # Extract the response content
+        reply = response.choices[0].message.content
         return reply
         
     except Exception as e:
