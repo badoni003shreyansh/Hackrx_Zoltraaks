@@ -161,8 +161,8 @@ def create_prompt_for_questions(text: str, questions: List[str]) -> str:
     try:
         # Optimized text chunking - smaller chunks for faster search
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=600,      # Reduced from 800
-            chunk_overlap=100,
+            chunk_size=700,      # Reduced from 800
+            chunk_overlap=200,
         )
         text_chunks = text_splitter.split_text(text)
         
