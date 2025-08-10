@@ -162,8 +162,7 @@ def create_prompt_for_questions(text: str, questions: List[str]) -> str:
         # Optimized text chunking - smaller chunks for faster search
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=600,      # Reduced from 800
-            chunk_overlap=100,   # Reduced from 200
-            separators=["\n\n", "\n", ". ", ".", " ", ""]  # More granular splitting
+            chunk_overlap=100,
         )
         text_chunks = text_splitter.split_text(text)
         
@@ -236,7 +235,7 @@ def send_prompt_to_groq(prompt: str) -> str:
         # Single LLM call using native Groq client (non-streaming)
         groq_client = Groq(api_key=GROQ_API_KEY)
         completion = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",  # You can change this to your preferred model
+            model="openai/gpt-oss-20b",  # You can change this to your preferred model
             messages=[
                 {
                     "role": "user",
